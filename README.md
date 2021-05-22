@@ -18,7 +18,7 @@ DirectShow, WinRTのWindowsGraphicsCaptureAPIを利用しております。GDI�
 
 [CapturePreview](https://github.com/opysky/examples/tree/master/winrt/GraphicsCapture/CapturePreview)
 
-DirectShowとWinRTを組み合わせる際の注意点をQiitaにも記事としてあげる予定です。
+DirectShowとWinRTを組み合わせる際の注意点をQiitaにも[記事](https://qiita.com/HexagramNM/items/8493350d40608433421c)としてあげております。こちらもご覧ください。
 
 # ビルド方法
 
