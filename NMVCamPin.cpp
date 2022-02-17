@@ -212,6 +212,7 @@ void NMVCamPin::convertFrameToBits() {
 				pixelColor[cIdx] = 0;
 			}
 			if (m_pixelPosX[pixelPosition] >= 0 && m_pixelPosY[pixelPosition] >= 0) {
+#ifdef REFINED_PROCESS
 				//周囲4ピクセルの情報を使用して、位置で重みづけ平均化したピクセルカラーを適用する。
 				texPixelXInt = (int)m_pixelPosX[pixelPosition];
 				texPixelYInt = (int)m_pixelPosY[pixelPosition];
@@ -226,6 +227,15 @@ void NMVCamPin::convertFrameToBits() {
 						}
 					}
 				}
+#else
+				//Nearest Neighbor
+				texPixelXInt = (int)(m_pixelPosX[pixelPosition] + 0.5);
+				texPixelYInt = (int)(m_pixelPosY[pixelPosition] + 0.5);
+				texBitPos = mapd.RowPitch * texPixelYInt + 4 * texPixelXInt;
+				for (int cIdx = 0; cIdx < 3; cIdx++) {
+					pixelColor[cIdx] += source[texBitPos + cIdx];
+				}
+#endif
 			}
 			for (int cIdx = 0; cIdx < 3; cIdx++) {
 				m_frameBits[bitPosition + cIdx] = (unsigned char)(pixelColor[cIdx] + 0.5);
@@ -303,7 +313,6 @@ void NMVCamPin::onFrameArrived(Direct3D11CaptureFramePool const &sender,
 	m_deviceCtx->CopySubresourceRegion(m_bufferTexture, 0, 0, 0, 0,
 		texture2D.get(), 0, &m_capWinSizeInTexture);
 
-	convertFrameToBits();
 }
 
 /****************************************************************/
@@ -533,6 +542,7 @@ HRESULT NMVCamPin::FillBuffer(IMediaSample *pSample) {
 
 	//キャプチャされた画像のビット列をpSampleDataにコピー
 	if (isCapturing()) {
+		convertFrameToBits();
 		memcpy(pSampleData, m_frameBits, WINDOW_WIDTH * WINDOW_HEIGHT * ((PIXEL_BIT - 1) / 8 + 1));
 	}
 	else {
