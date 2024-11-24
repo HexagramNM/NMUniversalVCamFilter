@@ -97,6 +97,7 @@
 #define WINDOW_HEIGHT 720
 #define PIXEL_BIT 24
 #define PIXEL_BYTE 3
+#define CS_THREADS_NUM 20
 
 #include "NMVCamFilter.h"
 

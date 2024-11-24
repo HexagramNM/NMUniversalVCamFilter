@@ -172,15 +172,17 @@ private:
 	/****************************************************************/
 	/*  DirectX Function                                            */
 	/****************************************************************/
-	void SetupOffscreenRendering();
+	void setupOffscreenRendering();
 
-	void SetupPlaceholder();
+	void setupSampleFormatter();
 
-	void DrawCaptureWindow();
+	void setupPlaceholder();
 
-	void DrawPlaceholder();
+	void drawCaptureWindow();
 
-	void GetSampleOnCaptureWindow(LPBYTE sampleData);
+	void drawPlaceholder();
+
+	void getSampleOnCaptureWindow(LPBYTE sampleData);
 
 	/****************************************************************/
 	/*  DirectInput Function                                        */
@@ -239,6 +241,12 @@ private:
 	D3D11_BUFFER_DESC _vbDesc;
 	VertexType _polygonVertex[4];
 	com_ptr<ID3D11Buffer> _vertexBuffer;
+
+	com_ptr<ID3D11ShaderResourceView> _formatterSRV;
+	com_ptr<ID3D11UnorderedAccessView> _formatterUAV;
+	com_ptr<ID3D11ComputeShader> _formatterCS;
+	com_ptr<ID3D11Buffer> _gpuFormatterBuffer;
+	com_ptr<ID3D11Buffer> _cpuSampleBuffer;
 
 	com_ptr<ID2D1Factory> _placeholderD2DFactory;
 	com_ptr<ID2D1RenderTarget> _placeholderRenderTarget;

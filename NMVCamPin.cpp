@@ -15,6 +15,10 @@ const char* hlslOffscreenRenderingCode =
 #include "SpriteShader.hlsl"
 ;
 
+const char* hlslFormatterCode =
+#include "SampleFormatter.hlsl"
+;
+
 NMVCamPin::NMVCamPin(HRESULT *phr, NMVCamSource *pFilter) : CSourceStream(NAME("NMVCamPin"), phr, pFilter, OUTPUT_PIN_NAME)
 	,_pFilter(pFilter)
 	,_isSelectingWindow(false), _pickerActivate(false), _reverseOutput(false), _previousChangeReverseOutput(false)
@@ -38,8 +42,9 @@ NMVCamPin::NMVCamPin(HRESULT *phr, NMVCamSource *pFilter) : CSourceStream(NAME("
 
 	createDirect3DDevice();
 	settingDirectInput();
-	SetupOffscreenRendering();
-	SetupPlaceholder();
+	setupOffscreenRendering();
+	setupSampleFormatter();
+	setupPlaceholder();
 }
 
 NMVCamPin::~NMVCamPin() {
@@ -219,7 +224,7 @@ void NMVCamPin::onFrameArrived(Direct3D11CaptureFramePool const &sender,
 /****************************************************************/
 
 // _offscreenRenderingTextureへのオフスクリーンレンダリングの準備
-void NMVCamPin::SetupOffscreenRendering() {
+void NMVCamPin::setupOffscreenRendering() {
 	DXGI_FORMAT dxgiFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
 
 	CD3D11_RENDER_TARGET_VIEW_DESC renderTargetViewDesc(D3D11_RTV_DIMENSION_TEXTURE2D, dxgiFormat);
@@ -279,7 +284,60 @@ void NMVCamPin::SetupOffscreenRendering() {
 	_deviceCtx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
 }
 
-void NMVCamPin::SetupPlaceholder() {
+// SampleFormatter実行の準備
+void NMVCamPin::setupSampleFormatter()
+{
+	CD3D11_SHADER_RESOURCE_VIEW_DESC shaderResourceViewDesc(D3D11_SRV_DIMENSION_TEXTURE2D, DXGI_FORMAT_B8G8R8A8_UNORM);
+	_dxDevice->CreateShaderResourceView(_offscreenRenderingTexture.get(),
+		&shaderResourceViewDesc, _formatterSRV.put());
+
+	UINT bufferByteSize = WINDOW_WIDTH * WINDOW_HEIGHT * PIXEL_BYTE;
+
+	size_t hlslSize = std::strlen(hlslFormatterCode);
+	std::string csThreadsStr = std::to_string(CS_THREADS_NUM);
+	std::string windowWidthStr = std::to_string(WINDOW_WIDTH);
+	com_ptr<ID3DBlob> compiledCS;
+	D3D_SHADER_MACRO csMacro[] = {
+		"CS_THREADS_NUM_IN_CS", csThreadsStr.c_str(),
+		"WINDOW_WIDTH_IN_CS", windowWidthStr.c_str(),
+		NULL, NULL
+	};
+	D3DCompile(hlslFormatterCode, hlslSize, nullptr, csMacro, nullptr,
+		"formatterMain", "cs_5_0", 0, 0, compiledCS.put(), nullptr);
+
+	_dxDevice->CreateComputeShader(compiledCS->GetBufferPointer(),
+		compiledCS->GetBufferSize(), nullptr, _formatterCS.put());
+	_deviceCtx->CSSetShader(_formatterCS.get(), 0, 0);
+
+	D3D11_BUFFER_DESC bufferDesc;
+	bufferDesc.ByteWidth = bufferByteSize;
+	bufferDesc.Usage = D3D11_USAGE_DEFAULT;
+	bufferDesc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+	bufferDesc.CPUAccessFlags = 0;
+	bufferDesc.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
+	_dxDevice->CreateBuffer(&bufferDesc, nullptr, _gpuFormatterBuffer.put());
+
+	bufferDesc.Usage = D3D11_USAGE_STAGING;
+	bufferDesc.BindFlags = 0;
+	bufferDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+	bufferDesc.MiscFlags = 0;
+	_dxDevice->CreateBuffer(&bufferDesc, nullptr, _cpuSampleBuffer.put());
+
+	D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc;
+	uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+	uavDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+	uavDesc.Buffer.FirstElement = 0;
+	uavDesc.Buffer.NumElements = bufferByteSize / 4;
+	uavDesc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
+	_dxDevice->CreateUnorderedAccessView(_gpuFormatterBuffer.get(), &uavDesc, _formatterUAV.put());
+
+	ID3D11UnorderedAccessView* uavs[] = { _formatterUAV.get() };
+	UINT initialCounts[] = { 0 };
+	_deviceCtx->CSSetUnorderedAccessViews(0, 1, uavs, initialCounts);
+}
+
+// "No Signal"表示の準備
+void NMVCamPin::setupPlaceholder() {
 	D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, _placeholderD2DFactory.put());
 	D2D1_RENDER_TARGET_PROPERTIES d2d1props = D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
 		D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE));
@@ -309,7 +367,8 @@ void NMVCamPin::SetupPlaceholder() {
 	_placeholderRenderTarget->SetTransform(transform);
 }
 
-void NMVCamPin::DrawCaptureWindow()
+//キャプチャウィンドウテクスチャのオフスクリーンレンダリング
+void NMVCamPin::drawCaptureWindow()
 {
 	ID3D11RenderTargetView* tempRenderTargetViewPtr = _renderTargetView.get();
 	_deviceCtx->OMSetRenderTargets(1, &tempRenderTargetViewPtr, nullptr);
@@ -361,7 +420,7 @@ void NMVCamPin::DrawCaptureWindow()
 }
 
 // DirectWriteで"No Signal"の表示
-void NMVCamPin::DrawPlaceholder() {
+void NMVCamPin::drawPlaceholder() {
 	_placeholderRenderTarget->BeginDraw();
 
 	_placeholderRenderTarget->Clear(D2D1::ColorF(D2D1::ColorF::Black));
@@ -378,26 +437,25 @@ void NMVCamPin::DrawPlaceholder() {
 	_placeholderRenderTarget->EndDraw();
 }
 
-void NMVCamPin::GetSampleOnCaptureWindow(LPBYTE sampleData)
+// コンピュートシェーダでサンプルのフォーマットにあったバッファを作成
+void NMVCamPin::getSampleOnCaptureWindow(LPBYTE sampleData)
 {
-	_deviceCtx->CopyResource(_bufferTexture.get(), _offscreenRenderingTexture.get());
+	ID3D11ShaderResourceView* tempShaderResourceViewPtr[] = { _formatterSRV.get() };
+	_deviceCtx->CSSetShaderResources(0, 1, tempShaderResourceViewPtr);
+	_deviceCtx->Dispatch(WINDOW_WIDTH / (CS_THREADS_NUM * 4), WINDOW_HEIGHT / CS_THREADS_NUM, 1);
+
+	ID3D11ShaderResourceView* tempShaderResourceViewNullPtr[] = { nullptr };
+	_deviceCtx->CSSetShaderResources(0, 1, tempShaderResourceViewNullPtr);
+
+	_deviceCtx->CopyResource(_cpuSampleBuffer.get(), _gpuFormatterBuffer.get());
 
 	com_ptr<IDXGISurface> dxgiSurface;
-	_bufferTexture->QueryInterface(IID_PPV_ARGS(dxgiSurface.put()));
+	_cpuSampleBuffer->QueryInterface(IID_PPV_ARGS(dxgiSurface.put()));
 
 	DXGI_MAPPED_RECT mapFromCpuSampleBuffer;
 	dxgiSurface->Map(&mapFromCpuSampleBuffer, DXGI_MAP_READ);
 
-	for (int y = 0; y < WINDOW_HEIGHT; y++) {
-		for (int x = 0; x < WINDOW_WIDTH; x++) {
-			int pixelIndexSample = (y * WINDOW_WIDTH + x) * PIXEL_BYTE;
-			int pixelIndexTexture = y * mapFromCpuSampleBuffer.Pitch + x * 4;
-			for (int ch = 0; ch < PIXEL_BYTE; ch++) {
-				sampleData[pixelIndexSample + ch]
-					= mapFromCpuSampleBuffer.pBits[pixelIndexTexture + ch];
-			}
-		}
-	}
+	CopyMemory((PVOID)sampleData, (PVOID)mapFromCpuSampleBuffer.pBits, WINDOW_WIDTH * WINDOW_HEIGHT * PIXEL_BYTE);
 
 	dxgiSurface->Unmap();
 }
@@ -613,13 +671,13 @@ HRESULT NMVCamPin::FillBuffer(IMediaSample *pSample) {
 
 	//キャプチャされた画像のビット列をpSampleDataにコピー
 	if (isCapturing()) {
-		DrawCaptureWindow();
+		drawCaptureWindow();
 	}
 	else {
-		DrawPlaceholder();
+		drawPlaceholder();
 	}
 
-	GetSampleOnCaptureWindow(pSampleData);
+	getSampleOnCaptureWindow(pSampleData);
 
 	const REFERENCE_TIME delta=_rtFrameLength;
 	REFERENCE_TIME start_time=ref;
