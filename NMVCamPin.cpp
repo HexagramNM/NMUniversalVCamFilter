@@ -1,4 +1,5 @@
 ﻿#include "stdafx.h"
+#include <d3dcompiler.h>
 
 using namespace winrt;
 using namespace winrt::Windows::System;
@@ -7,74 +8,47 @@ using namespace winrt::Windows::Graphics::DirectX;
 using namespace winrt::Windows::Graphics::DirectX::Direct3D11;
 using namespace winrt::Windows::Graphics::Capture;
 
+#define HLSL_EXTERNAL_INCLUDE(...) #__VA_ARGS__
+
+// Embeded hlsl shader source code.
+const char* hlslOffscreenRenderingCode =
+#include "SpriteShader.hlsl"
+;
+
 NMVCamPin::NMVCamPin(HRESULT *phr, NMVCamSource *pFilter) : CSourceStream(NAME("NMVCamPin"), phr, pFilter, OUTPUT_PIN_NAME)
-	,m_pFilter(pFilter)
-	,m_isSelectingWindow(false), m_pickerActivate(false), m_reverseOutput(false), m_previousChangeReverseOutput(false)
-	,m_deviceCtx(nullptr), m_bufferTexture(nullptr), m_attatchedWindow(NULL)
-	,m_graphicsCaptureItem(nullptr), m_framePool(nullptr)
-	,m_captureSession(nullptr), m_frameBits(nullptr), m_pixelPosX(nullptr), m_pixelPosY(nullptr)
-	,m_lpDI(NULL), m_lpKeyboard(NULL), m_capturePickerThread(nullptr)
-	,m_pickerResult(S_OK), m_rtFrameLength(666666)
-	,m_BmpData(NULL), m_Hdc(NULL), m_Bitmap(NULL)
+	,_pFilter(pFilter)
+	,_isSelectingWindow(false), _pickerActivate(false), _reverseOutput(false), _previousChangeReverseOutput(false)
+	,_deviceCtx(nullptr), _bufferTexture(nullptr), _attatchedWindow(NULL)
+	,_graphicsCaptureItem(nullptr), _framePool(nullptr)
+	,_captureSession(nullptr)
+	,_lpDI(NULL), _lpKeyboard(NULL), _capturePickerThread(nullptr)
+	,_pickerResult(S_OK), _rtFrameLength(666666)
 {
 	GetMediaType(&m_mt);
-	m_brush = CreateSolidBrush(RGB(0, 0, 0));
 
 	//CPU読み出し可能なバッファをGPU上に作成
-	m_capWinSize.Width = 1;
-	m_capWinSize.Height = 1;
-	m_capWinSizeInTexture.left = 0;
-	m_capWinSizeInTexture.right = 1;
-	m_capWinSizeInTexture.top = 0;
-	m_capWinSizeInTexture.bottom = 1;
-	m_capWinSizeInTexture.front = 0;
-	m_capWinSizeInTexture.back = 1;
-	m_frameBits = new unsigned char[WINDOW_WIDTH * WINDOW_HEIGHT * ((PIXEL_BIT - 1) / 8 + 1)];
-	m_pixelPosX = new double[WINDOW_WIDTH * WINDOW_HEIGHT];
-	m_pixelPosY = new double[WINDOW_WIDTH * WINDOW_HEIGHT];
-	for (int idx = 0; idx < WINDOW_WIDTH * WINDOW_HEIGHT; idx++) {
-		m_pixelPosX[idx] = -1;
-		m_pixelPosY[idx] = -1;
-	}
+	_capWinSize.Width = 1;
+	_capWinSize.Height = 1;
+	_capWinSizeInTexture.left = 0;
+	_capWinSizeInTexture.right = 1;
+	_capWinSizeInTexture.top = 0;
+	_capWinSizeInTexture.bottom = 1;
+	_capWinSizeInTexture.front = 0;
+	_capWinSizeInTexture.back = 1;
+
 	createDirect3DDevice();
 	settingDirectInput();
+	SetupOffscreenRendering();
+	SetupPlaceholder();
 }
 
 NMVCamPin::~NMVCamPin() {
 	finishDirectInput();
 
-	if (m_capturePickerThread) {
-		m_capturePickerThread->join();
-		delete m_capturePickerThread;
-		m_capturePickerThread = nullptr;
-	}
-	if (m_bufferTexture) {
-		m_bufferTexture->Release();
-		m_bufferTexture = nullptr;
-	}
-	if (m_Bitmap) {
-		DeleteObject(m_Bitmap);
-		m_Bitmap = NULL;
-	}
-	if (m_Hdc) {
-		DeleteDC(m_Hdc);
-		m_Hdc = NULL;
-	}
-	if (m_BmpData) {
-		delete m_BmpData;
-		m_BmpData = NULL;
-	}
-	if (m_frameBits) {
-		delete[] m_frameBits;
-		m_frameBits = nullptr;
-	}
-	if (m_pixelPosX) {
-		delete[] m_pixelPosX;
-		m_pixelPosX = nullptr;
-	}
-	if (m_pixelPosY) {
-		delete[] m_pixelPosY;
-		m_pixelPosY = nullptr;
+	if (_capturePickerThread) {
+		_capturePickerThread->join();
+		delete _capturePickerThread;
+		_capturePickerThread = nullptr;
 	}
 }
 
@@ -99,50 +73,69 @@ void NMVCamPin::createDirect3DDevice() {
 #ifdef _DEBUG
 	createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
 #endif
-	if (m_dxDevice != nullptr) {
-		m_dxDevice.Close();
+	if (_dxWinRTDevice != nullptr) {
+		_dxWinRTDevice.Close();
 	}
 	com_ptr<ID3D11Device> d3dDevice = nullptr;
 	check_hresult(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE,
 		nullptr, createDeviceFlags, nullptr, 0, D3D11_SDK_VERSION,
-		d3dDevice.put(), nullptr, nullptr));
-	com_ptr<IDXGIDevice> dxgiDevice = d3dDevice.as<IDXGIDevice>();
+		_dxDevice.put(), nullptr, nullptr));
+	com_ptr<IDXGIDevice> dxgiDevice = _dxDevice.as<IDXGIDevice>();
 	com_ptr<::IInspectable> device = nullptr;
 	check_hresult(::CreateDirect3D11DeviceFromDXGIDevice(dxgiDevice.get(), device.put()));
-	m_dxDevice = device.as<winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice>();
-	d3dDevice->GetImmediateContext(m_deviceCtx.put());
+	_dxWinRTDevice = device.as<winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice>();
+	_dxDevice->GetImmediateContext(_deviceCtx.put());
+
+	D3D11_TEXTURE2D_DESC textureDesc;
+	//共通
+	textureDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+	textureDesc.ArraySize = 1;
+	textureDesc.MipLevels = 1;
+	textureDesc.MiscFlags = 0;
+	textureDesc.SampleDesc.Count = 1;
+	textureDesc.SampleDesc.Quality = 0;
+
+	//キャプチャしてきたテクスチャ
+	textureDesc.Width = MAX_CAP_WIDTH;
+	textureDesc.Height = MAX_CAP_HEIGHT;
+	textureDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	textureDesc.CPUAccessFlags = 0;
+	textureDesc.Usage = D3D11_USAGE_DEFAULT;
+	_dxDevice->CreateTexture2D(&textureDesc, 0, _captureWindowTexture.put());
+
+	//オフスクリーンレンダリングの描画先テクスチャ
+	textureDesc.Width = WINDOW_WIDTH;
+	textureDesc.Height = WINDOW_HEIGHT;
+	textureDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+	textureDesc.CPUAccessFlags = 0;
+	textureDesc.Usage = D3D11_USAGE_DEFAULT;
+	_dxDevice->CreateTexture2D(&textureDesc, 0, _offscreenRenderingTexture.put());
 
 	//CPUから読みだすためのバッファテクスチャ
-	m_bufferTextureDesc.Width = MAX_CAP_WIDTH;
-	m_bufferTextureDesc.Height = MAX_CAP_HEIGHT;
-	m_bufferTextureDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-	m_bufferTextureDesc.ArraySize = 1;
-	m_bufferTextureDesc.BindFlags = 0;
-	m_bufferTextureDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
-	m_bufferTextureDesc.MipLevels = 1;
-	m_bufferTextureDesc.MiscFlags = 0;
-	m_bufferTextureDesc.SampleDesc.Count = 1;
-	m_bufferTextureDesc.SampleDesc.Quality = 0;
-	m_bufferTextureDesc.Usage = D3D11_USAGE_STAGING;
-	d3dDevice->CreateTexture2D(&m_bufferTextureDesc, 0, &m_bufferTexture);
+	textureDesc.Width = WINDOW_WIDTH;
+	textureDesc.Height = WINDOW_HEIGHT;
+	textureDesc.BindFlags = 0;
+	textureDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+	textureDesc.Usage = D3D11_USAGE_STAGING;
+	_dxDevice->CreateTexture2D(&textureDesc, 0, _bufferTexture.put());
 }
 
 void NMVCamPin::openCaptureWindowPicker() {
 	init_apartment();
 	
-	m_attatchedWindow = CreateWindowW(L"STATIC", L"NMUniversalVCam", SS_WHITERECT,
+	_attatchedWindow = CreateWindowW(L"STATIC", L"NMUniversalVCam", SS_WHITERECT,
 		0, 0, 300, 1, NULL, NULL, GetModuleHandleW(NULL), NULL);
-	ShowWindow(m_attatchedWindow, SW_SHOW);
-	UpdateWindow(m_attatchedWindow);
+	ShowWindow(_attatchedWindow, SW_SHOW);
+	UpdateWindow(_attatchedWindow);
 	//ピッカーを開くために作ったウィンドウをピッカーの選択肢から除外する。
-	SetWindowDisplayAffinity(m_attatchedWindow, WDA_EXCLUDEFROMCAPTURE);
+	SetWindowDisplayAffinity(_attatchedWindow, WDA_EXCLUDEFROMCAPTURE);
 	updateAttatchedWindow();
 
 	GraphicsCapturePicker picker;
 	auto interop = picker.as<::IInitializeWithWindow>();
-	m_pickerResult = interop->Initialize(m_attatchedWindow);
-	m_graphicsCaptureAsyncResult = picker.PickSingleItemAsync();
-	while (m_isSelectingWindow) {
+	_pickerResult = interop->Initialize(_attatchedWindow);
+	_graphicsCaptureAsyncResult = picker.PickSingleItemAsync();
+	while (_isSelectingWindow) {
 		updateAttatchedWindow();
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 	}
@@ -159,131 +152,33 @@ void NMVCamPin::updateAttatchedWindow() {
 
 void NMVCamPin::stopCapture() {
 	if (isCapturing()) {
-		m_frameArrived.revoke();
-		m_captureSession = nullptr;
-		m_framePool.Close();
-		m_framePool = nullptr;
-		m_graphicsCaptureItem = nullptr;
+		_frameArrived.revoke();
+		_captureSession = nullptr;
+		_framePool.Close();
+		_framePool = nullptr;
+		_graphicsCaptureItem = nullptr;
 	}
 }
 
 void NMVCamPin::changeWindow(GraphicsCaptureItem targetCaptureItem) {
-	DestroyWindow(m_attatchedWindow);
-	m_attatchedWindow = NULL;
-	m_graphicsCaptureAsyncResult = nullptr;
+	DestroyWindow(_attatchedWindow);
+	_attatchedWindow = NULL;
+	_graphicsCaptureAsyncResult = nullptr;
 	if (targetCaptureItem == nullptr) {
 		return;
 	}
 	stopCapture();
 
-	m_graphicsCaptureItem = targetCaptureItem;
-	m_capWinSize = m_graphicsCaptureItem.Size();
-	m_capWinSizeInTexture.right = m_capWinSize.Width;
-	m_capWinSizeInTexture.bottom = m_capWinSize.Height;
-	changePixelPos();
-	m_framePool = Direct3D11CaptureFramePool::CreateFreeThreaded(m_dxDevice, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, m_capWinSize);
-	m_frameArrived = m_framePool.FrameArrived(auto_revoke, { this, &NMVCamPin::onFrameArrived });
-	m_captureSession = m_framePool.CreateCaptureSession(m_graphicsCaptureItem);
+	_graphicsCaptureItem = targetCaptureItem;
+	_capWinSize = _graphicsCaptureItem.Size();
+	_capWinSizeInTexture.right = _capWinSize.Width;
+	_capWinSizeInTexture.bottom = _capWinSize.Height;
+	_framePool = Direct3D11CaptureFramePool::CreateFreeThreaded(_dxWinRTDevice, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, _capWinSize);
+	_frameArrived = _framePool.FrameArrived(auto_revoke, { this, &NMVCamPin::onFrameArrived });
+	_captureSession = _framePool.CreateCaptureSession(_graphicsCaptureItem);
 	//IsCursorCaptureEnabledでカーソルもキャプチャするか指定できる。
-	m_captureSession.IsCursorCaptureEnabled(false);
-	m_captureSession.StartCapture();
-}
-
-void NMVCamPin::convertFrameToBits() {
-	D3D11_MAPPED_SUBRESOURCE mapd;
-	HRESULT hr;
-	hr = m_deviceCtx->Map(m_bufferTexture, 0, D3D11_MAP_READ, 0, &mapd);
-	const unsigned char *source = static_cast<const unsigned char *>(mapd.pData);
-	int texBitPos = 0;
-
-	//取得したピクセル情報からビットマップを作る処理
-	int pixelPosition = 0;
-	int bitPosition = 0;
-	int texPixelXInt = 0;
-	int texPixelYInt = 0;
-	double texPixelXDecimal = 0.0;
-	double texPixelYDecimal = 0.0;
-	double pixelColor[3] = { 0.0, 0.0, 0.0 };
-	double pixelRate = 0.0;
-	for (int y = 0; y < WINDOW_HEIGHT; y++) {
-		for (int x = 0; x < WINDOW_WIDTH; x++) {
-			//ピンに送られるビットはBGRで、上下反転するっぽい
-			for (int cIdx = 0; cIdx < 3; cIdx++) {
-				pixelColor[cIdx] = 0;
-			}
-			if (m_pixelPosX[pixelPosition] >= 0 && m_pixelPosY[pixelPosition] >= 0) {
-#ifdef REFINED_PROCESS
-				//周囲4ピクセルの情報を使用して、位置で重みづけ平均化したピクセルカラーを適用する。
-				texPixelXInt = (int)m_pixelPosX[pixelPosition];
-				texPixelYInt = (int)m_pixelPosY[pixelPosition];
-				texPixelXDecimal = m_pixelPosX[pixelPosition] - texPixelXInt;
-				texPixelYDecimal = m_pixelPosY[pixelPosition] - texPixelYInt;
-				for (int px = 0; px < 2; px++) {
-					for (int py = 0; py < 2; py++) {
-						texBitPos = mapd.RowPitch * (texPixelYInt + py) + 4 * (texPixelXInt + px);
-						pixelRate = (px == 0 ? (1.0 - texPixelXDecimal) : texPixelXDecimal) *  (py == 0 ? (1.0 - texPixelYDecimal) : texPixelYDecimal);
-						for (int cIdx = 0; cIdx < 3; cIdx++) {
-							pixelColor[cIdx] += source[texBitPos + cIdx] * pixelRate;
-						}
-					}
-				}
-#else
-				//Nearest Neighbor
-				texPixelXInt = (int)(m_pixelPosX[pixelPosition] + 0.5);
-				texPixelYInt = (int)(m_pixelPosY[pixelPosition] + 0.5);
-				texBitPos = mapd.RowPitch * texPixelYInt + 4 * texPixelXInt;
-				for (int cIdx = 0; cIdx < 3; cIdx++) {
-					pixelColor[cIdx] += source[texBitPos + cIdx];
-				}
-#endif
-			}
-			for (int cIdx = 0; cIdx < 3; cIdx++) {
-				m_frameBits[bitPosition + cIdx] = (unsigned char)(pixelColor[cIdx] + 0.5);
-			}
-			pixelPosition++;
-			bitPosition += 3;
-		}
-	}
-	m_deviceCtx->Unmap(m_bufferTexture, 0);
-}
-
-void NMVCamPin::changePixelPos() {
-	double widthZoomRate = (double)WINDOW_WIDTH / (double)m_capWinSize.Width;
-	double heightZoomRate = (double)WINDOW_HEIGHT / (double)m_capWinSize.Height;
-	double zoomRate = (widthZoomRate < heightZoomRate ? widthZoomRate : heightZoomRate);
-	double invZoomRate = 1.0 / zoomRate;
-	double halfWinWidth = (double)WINDOW_WIDTH * 0.5;
-	double halfWinHeight = (double)WINDOW_HEIGHT * 0.5;
-
-	double winSizeWidthDouble = (double)m_capWinSize.Width;
-	double winSizeHeightDouble = (double)m_capWinSize.Height;
-	double halfCapWidth = winSizeWidthDouble * 0.5;
-	double halfCapHeight = winSizeHeightDouble * 0.5;
-
-	int pixeldx = 0;
-	double capPosX = 0;
-	double capPosY = 0;
-	for (int y = 0; y < WINDOW_HEIGHT; y++) {
-		for (int x = 0; x < WINDOW_WIDTH; x++) {
-			if (m_reverseOutput) {
-				capPosX = (halfWinWidth - x) * invZoomRate + halfCapWidth;
-			}
-			else {
-				capPosX = (x - halfWinWidth) * invZoomRate + halfCapWidth;
-			}
-			capPosY = winSizeHeightDouble - 1.0 - ((y - halfWinHeight) * invZoomRate + halfCapHeight);
-
-			if (capPosX >= 0.0 && capPosX < winSizeWidthDouble && capPosY >= 0 && capPosY < winSizeHeightDouble) {
-				m_pixelPosX[pixeldx] = capPosX;
-				m_pixelPosY[pixeldx] = capPosY;
-			}
-			else {
-				m_pixelPosX[pixeldx] = -1.0;
-				m_pixelPosY[pixeldx] = -1.0;
-			}
-			pixeldx++;
-		}
-	}
+	_captureSession.IsCursorCaptureEnabled(false);
+	_captureSession.StartCapture();
 }
 
 void NMVCamPin::onFrameArrived(Direct3D11CaptureFramePool const &sender,
@@ -298,25 +193,217 @@ void NMVCamPin::onFrameArrived(Direct3D11CaptureFramePool const &sender,
 	if (itemSize.Height <= 0) {
 		itemSize.Height = 1;
 	}
-	if (itemSize.Width != m_capWinSize.Width || itemSize.Height != m_capWinSize.Height) {
-		m_capWinSize.Width = itemSize.Width;
-		m_capWinSize.Height = itemSize.Height;
-		m_capWinSizeInTexture.right = m_capWinSize.Width;
-		m_capWinSizeInTexture.bottom = m_capWinSize.Height;
-		changePixelPos();
-		m_framePool.Recreate(m_dxDevice, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, m_capWinSize);
+	if (itemSize.Width != _capWinSize.Width || itemSize.Height != _capWinSize.Height) {
+		_capWinSize.Width = itemSize.Width;
+		_capWinSize.Height = itemSize.Height;
+		_capWinSizeInTexture.right = _capWinSize.Width;
+		_capWinSizeInTexture.bottom = _capWinSize.Height;
+		_framePool.Recreate(_dxWinRTDevice, DirectXPixelFormat::B8G8R8A8UIntNormalized, 2, _capWinSize);
 	}
 
 	com_ptr<ID3D11Texture2D> texture2D = getDXGIInterfaceFromObject<::ID3D11Texture2D>(frame.Surface());
 
-	//CPU読み込み可能なバッファテクスチャにGPU上でデータコピー
-	m_deviceCtx->CopySubresourceRegion(m_bufferTexture, 0, 0, 0, 0,
-		texture2D.get(), 0, &m_capWinSizeInTexture);
+	//_sharedCaptureWindowTextureにGPU上でデータコピー
+	_deviceCtx->CopySubresourceRegion(_captureWindowTexture.get(), 0, 0, 0, 0,
+		texture2D.get(), 0, &_capWinSizeInTexture);
+	_deviceCtx->Flush();
 
 }
 
 /****************************************************************/
 /*  winRT GraphicsCapture Function End                          */
+/****************************************************************/
+
+/****************************************************************/
+/*  DirectX Function Start                                      */
+/****************************************************************/
+
+// _offscreenRenderingTextureへのオフスクリーンレンダリングの準備
+void NMVCamPin::SetupOffscreenRendering() {
+	DXGI_FORMAT dxgiFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
+
+	CD3D11_RENDER_TARGET_VIEW_DESC renderTargetViewDesc(D3D11_RTV_DIMENSION_TEXTURE2D, dxgiFormat);
+	_dxDevice->CreateRenderTargetView(_offscreenRenderingTexture.get(),
+		&renderTargetViewDesc, _renderTargetView.put());
+
+	CD3D11_SHADER_RESOURCE_VIEW_DESC shaderResourceViewDesc(D3D11_SRV_DIMENSION_TEXTURE2D, dxgiFormat);
+	_dxDevice->CreateShaderResourceView(_captureWindowTexture.get(),
+		&shaderResourceViewDesc, _shaderResourceView.put());
+
+	D3D11_VIEWPORT vp = { 0.0f, 0.0f, (float)WINDOW_WIDTH, (float)WINDOW_HEIGHT, 0.0f, 1.0f };
+	_deviceCtx->RSSetViewports(1, &vp);
+
+	size_t hlslSize = std::strlen(hlslOffscreenRenderingCode);
+	com_ptr<ID3DBlob> compiledVS;
+	D3DCompile(hlslOffscreenRenderingCode, hlslSize, nullptr, nullptr, nullptr,
+		"VS", "vs_5_0", 0, 0, compiledVS.put(), nullptr);
+
+	com_ptr<ID3DBlob> compiledPS;
+	D3DCompile(hlslOffscreenRenderingCode, hlslSize, nullptr, nullptr, nullptr,
+		"PS", "ps_5_0", 0, 0, compiledPS.put(), nullptr);
+
+	_dxDevice->CreateVertexShader(compiledVS->GetBufferPointer(),
+		compiledVS->GetBufferSize(), nullptr, _spriteVS.put());
+	_deviceCtx->VSSetShader(_spriteVS.get(), 0, 0);
+
+	_dxDevice->CreatePixelShader(compiledPS->GetBufferPointer(),
+		compiledPS->GetBufferSize(), nullptr, _spritePS.put());
+	_deviceCtx->PSSetShader(_spritePS.get(), 0, 0);
+
+	D3D11_INPUT_ELEMENT_DESC layout[2] = {
+		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+		{"TEXUV", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0}
+	};
+
+	_dxDevice->CreateInputLayout(layout, 2, compiledVS->GetBufferPointer(),
+		compiledVS->GetBufferSize(), _spriteInputLayout.put());
+	_deviceCtx->IASetInputLayout(_spriteInputLayout.get());
+
+	_vbDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+	_vbDesc.ByteWidth = sizeof(VertexType) * 4;
+	_vbDesc.MiscFlags = 0;
+	_vbDesc.StructureByteStride = 0;
+	_vbDesc.Usage = D3D11_USAGE_DEFAULT;
+	_vbDesc.CPUAccessFlags = 0;
+
+	D3D11_SUBRESOURCE_DATA initData = {
+		_polygonVertex, sizeof(_polygonVertex), 0
+	};
+
+	_dxDevice->CreateBuffer(&_vbDesc, &initData, _vertexBuffer.put());
+
+	UINT stride = sizeof(VertexType);
+	UINT offset = 0;
+	ID3D11Buffer* tempBufferPtr = _vertexBuffer.get();
+	_deviceCtx->IASetVertexBuffers(0, 1, &tempBufferPtr, &stride, &offset);
+	_deviceCtx->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+}
+
+void NMVCamPin::SetupPlaceholder() {
+	D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, _placeholderD2DFactory.put());
+	D2D1_RENDER_TARGET_PROPERTIES d2d1props = D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
+		D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE));
+
+	com_ptr<IDXGISurface>renderTargetSurface;
+	_offscreenRenderingTexture.as(IID_PPV_ARGS(renderTargetSurface.put()));
+
+	HRESULT hr = _placeholderD2DFactory->CreateDxgiSurfaceRenderTarget(
+		renderTargetSurface.get(), &d2d1props, _placeholderRenderTarget.put());
+
+	_placeholderRenderTarget->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_CLEARTYPE);
+
+	DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
+		reinterpret_cast<IUnknown**>(_placeholderDWFactory.put()));
+
+	_placeholderDWFactory->CreateTextFormat(L"Arial", nullptr, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+		DWRITE_FONT_STRETCH_NORMAL, 40, L"", _placeholderTextFormat.put());
+
+	_placeholderTextFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+	_placeholderTextFormat->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+
+	_placeholderRenderTarget->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), _placeholderBrush.put());
+
+	// 上下反転
+	D2D1_MATRIX_3X2_F transform = D2D1::Matrix3x2F::Scale(1.0f, -1.0f,
+		D2D1::Point2F(WINDOW_WIDTH * 0.5f, WINDOW_HEIGHT * 0.5f));
+	_placeholderRenderTarget->SetTransform(transform);
+}
+
+void NMVCamPin::DrawCaptureWindow()
+{
+	ID3D11RenderTargetView* tempRenderTargetViewPtr = _renderTargetView.get();
+	_deviceCtx->OMSetRenderTargets(1, &tempRenderTargetViewPtr, nullptr);
+
+	float color[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+	_deviceCtx->ClearRenderTargetView(_renderTargetView.get(), color);
+
+	// ポリゴン頂点位置の計算
+	float xPosRate = 1.0f;
+	float yPosRate = 1.0f;
+	float rectRate = static_cast<float>(WINDOW_WIDTH) / static_cast<float>(WINDOW_HEIGHT);
+	float floatWindowWidth = static_cast<float>(_capWinSize.Width);
+	float floatWindowHeight = static_cast<float>(_capWinSize.Height);
+
+	if (floatWindowWidth > floatWindowHeight * rectRate) {
+		yPosRate = floatWindowHeight * rectRate / floatWindowWidth;
+	}
+	else {
+		xPosRate = floatWindowWidth / (floatWindowHeight * rectRate);
+	}
+
+	// ポリゴン頂点のテクスチャ座標計算
+	float widthTextureRate = floatWindowWidth / static_cast<float>(MAX_CAP_WIDTH);
+	float heightTextureRate = floatWindowHeight / static_cast<float>(MAX_CAP_HEIGHT);
+
+	//ピンに送られるビットはBGRで、上下反転するっぽい
+	_polygonVertex[0] = { {-xPosRate, yPosRate, 0}, {0, heightTextureRate} };
+	_polygonVertex[1] = { {xPosRate, yPosRate, 0}, {widthTextureRate, heightTextureRate} };
+	_polygonVertex[2] = { {-xPosRate, -yPosRate, 0}, {0, 0} };
+	_polygonVertex[3] = { {xPosRate, -yPosRate, 0}, {widthTextureRate, 0} };
+
+	// 左右反転
+	if (_reverseOutput) {
+		_polygonVertex[0].Tex.x = widthTextureRate;
+		_polygonVertex[1].Tex.x = 0;
+		_polygonVertex[2].Tex.x = widthTextureRate;
+		_polygonVertex[3].Tex.x = 0;
+	}
+
+	_deviceCtx->UpdateSubresource(_vertexBuffer.get(), 0, nullptr, _polygonVertex, 0, 0);
+
+	ID3D11ShaderResourceView* tempShaderResourceViewPtr[] = { _shaderResourceView.get() };
+	_deviceCtx->PSSetShaderResources(0, 1, tempShaderResourceViewPtr);
+
+	_deviceCtx->Draw(4, 0);
+	_deviceCtx->Flush();
+
+	_deviceCtx->OMSetRenderTargets(0, nullptr, nullptr);
+}
+
+// DirectWriteで"No Signal"の表示
+void NMVCamPin::DrawPlaceholder() {
+	_placeholderRenderTarget->BeginDraw();
+
+	_placeholderRenderTarget->Clear(D2D1::ColorF(D2D1::ColorF::Black));
+
+	std::wstring placeholderText(L"No Signal: \nPress SHIFT + SPACE to select a window.");
+	D2D1_RECT_F rect;
+	rect.left = 0;
+	rect.right = WINDOW_WIDTH - 1;
+	rect.top = 0;
+	rect.bottom = WINDOW_HEIGHT - 1;
+	_placeholderRenderTarget->DrawText(placeholderText.c_str(), placeholderText.size(),
+		_placeholderTextFormat.get(), rect, _placeholderBrush.get());
+
+	_placeholderRenderTarget->EndDraw();
+}
+
+void NMVCamPin::GetSampleOnCaptureWindow(LPBYTE sampleData)
+{
+	_deviceCtx->CopyResource(_bufferTexture.get(), _offscreenRenderingTexture.get());
+
+	com_ptr<IDXGISurface> dxgiSurface;
+	_bufferTexture->QueryInterface(IID_PPV_ARGS(dxgiSurface.put()));
+
+	DXGI_MAPPED_RECT mapFromCpuSampleBuffer;
+	dxgiSurface->Map(&mapFromCpuSampleBuffer, DXGI_MAP_READ);
+
+	for (int y = 0; y < WINDOW_HEIGHT; y++) {
+		for (int x = 0; x < WINDOW_WIDTH; x++) {
+			int pixelIndexSample = (y * WINDOW_WIDTH + x) * PIXEL_BYTE;
+			int pixelIndexTexture = y * mapFromCpuSampleBuffer.Pitch + x * 4;
+			for (int ch = 0; ch < PIXEL_BYTE; ch++) {
+				sampleData[pixelIndexSample + ch]
+					= mapFromCpuSampleBuffer.pBits[pixelIndexTexture + ch];
+			}
+		}
+	}
+
+	dxgiSurface->Unmap();
+}
+
+/****************************************************************/
+/*  DirectX Function End                                        */
 /****************************************************************/
 
 /****************************************************************/
@@ -329,46 +416,46 @@ void NMVCamPin::settingDirectInput() {
 
 	//IDirectInput8の作成
 	ret = DirectInput8Create(hInst, DIRECTINPUT_VERSION, IID_IDirectInput8,
-		(LPVOID *)&m_lpDI, NULL);
+		(LPVOID *)&_lpDI, NULL);
 	if (FAILED(ret)) {
 		finishDirectInput();
 		return;
 	}
 
 	//IDirectInputDevice8の作成
-	ret = m_lpDI->CreateDevice(GUID_SysKeyboard, &m_lpKeyboard, NULL);
+	ret = _lpDI->CreateDevice(GUID_SysKeyboard, &_lpKeyboard, NULL);
 	if (FAILED(ret)) {
 		finishDirectInput();
 		return;
 	}
 
 	//IDirectInput8への入力形式の設定（デフォルト）
-	ret = m_lpKeyboard->SetDataFormat(&c_dfDIKeyboard);
+	ret = _lpKeyboard->SetDataFormat(&c_dfDIKeyboard);
 	if (FAILED(ret)) {
 		finishDirectInput();
 		return;
 	}
-	m_lpKeyboard->Acquire();
+	_lpKeyboard->Acquire();
 }
 
 void NMVCamPin::updateKeyboardState() {
 	HRESULT ret;
-	ZeroMemory(m_key, sizeof(m_key));
-	ret = m_lpKeyboard->GetDeviceState(sizeof(m_key), m_key);
+	ZeroMemory(_key, sizeof(_key));
+	ret = _lpKeyboard->GetDeviceState(sizeof(_key), _key);
 	if (FAILED(ret)) {
-		m_lpKeyboard->Acquire();
-		m_lpKeyboard->GetDeviceState(sizeof(m_key), m_key);
+		_lpKeyboard->Acquire();
+		_lpKeyboard->GetDeviceState(sizeof(_key), _key);
 	}
 }
 
 void NMVCamPin::finishDirectInput() {
-	if (m_lpKeyboard != NULL) {
-		m_lpKeyboard->Release();
-		m_lpKeyboard = NULL;
+	if (_lpKeyboard != NULL) {
+		_lpKeyboard->Release();
+		_lpKeyboard = NULL;
 	}
-	if (m_lpDI != NULL) {
-		m_lpDI->Release();
-		m_lpDI = NULL;
+	if (_lpDI != NULL) {
+		_lpDI->Release();
+		_lpDI = NULL;
 	}
 }
 
@@ -383,48 +470,47 @@ void NMVCamPin::finishDirectInput() {
 void NMVCamPin::manageCaptureWindowPicker() {
 	//pickerが開いており、選択が終わったのを検知したら、そのウィンドウを設定
 	//開いていない状態でspace + shiftを押すとウィンドウのピッカーを生成。
-	if (m_isSelectingWindow) {
-		if (m_graphicsCaptureAsyncResult) {
-			winrt::Windows::Foundation::AsyncStatus status = m_graphicsCaptureAsyncResult.Status();
+	if (_isSelectingWindow) {
+		if (_graphicsCaptureAsyncResult) {
+			winrt::Windows::Foundation::AsyncStatus status = _graphicsCaptureAsyncResult.Status();
 			if (status == winrt::Windows::Foundation::AsyncStatus::Completed) {
-				GraphicsCaptureItem tmpTarget = m_graphicsCaptureAsyncResult.GetResults();
+				GraphicsCaptureItem tmpTarget = _graphicsCaptureAsyncResult.GetResults();
 				changeWindow(tmpTarget);
-				m_isSelectingWindow = false;
-				m_capturePickerThread->join();
-				delete m_capturePickerThread;
-				m_capturePickerThread = nullptr;
+				_isSelectingWindow = false;
+				_capturePickerThread->join();
+				delete _capturePickerThread;
+				_capturePickerThread = nullptr;
 			}
 		}
-		m_pickerActivate = true;
+		_pickerActivate = true;
 	}
 	else {
-		if ((m_key[DIK_SPACE] & 0x80) != 0
-			&& ((m_key[DIK_LSHIFT] & 0x80) != 0 || (m_key[DIK_RSHIFT] & 0x80) != 0)) {
-			if (!m_pickerActivate) {
-				m_isSelectingWindow = true;
-				m_capturePickerThread = new std::thread([](NMVCamPin *inst) {inst->openCaptureWindowPicker(); }, this);
+		if ((_key[DIK_SPACE] & 0x80) != 0
+			&& ((_key[DIK_LSHIFT] & 0x80) != 0 || (_key[DIK_RSHIFT] & 0x80) != 0)) {
+			if (!_pickerActivate) {
+				_isSelectingWindow = true;
+				_capturePickerThread = new std::thread([](NMVCamPin *inst) {inst->openCaptureWindowPicker(); }, this);
 
 			}
-			m_pickerActivate = true;
+			_pickerActivate = true;
 		}
 		else {
-			m_pickerActivate = false;
+			_pickerActivate = false;
 		}
 	}
 }
 
 void NMVCamPin::manageReverseCommand() {
 	//space + ctrlでキャプチャ画面の左右反転
-	if ((m_key[DIK_SPACE] & 0x80) != 0
-		&& ((m_key[DIK_LCONTROL] & 0x80) != 0 || (m_key[DIK_RCONTROL] & 0x80) != 0)) {
-		if (!m_previousChangeReverseOutput) {
-			m_reverseOutput = !m_reverseOutput;
-			changePixelPos();
-			m_previousChangeReverseOutput = true;
+	if ((_key[DIK_SPACE] & 0x80) != 0
+		&& ((_key[DIK_LCONTROL] & 0x80) != 0 || (_key[DIK_RCONTROL] & 0x80) != 0)) {
+		if (!_previousChangeReverseOutput) {
+			_reverseOutput = !_reverseOutput;
+			_previousChangeReverseOutput = true;
 		}
 	}
 	else {
-		m_previousChangeReverseOutput = false;
+		_previousChangeReverseOutput = false;
 	}
 }
 
@@ -441,7 +527,7 @@ HRESULT NMVCamPin::GetMediaType(CMediaType *pMediaType) {
 	VIDEOINFO *pvi=(VIDEOINFO *)pMediaType->AllocFormatBuffer(sizeof(VIDEOINFO));
 	ZeroMemory(pvi, sizeof(VIDEOINFO));
 
-	pvi->AvgTimePerFrame=m_rtFrameLength;
+	pvi->AvgTimePerFrame=_rtFrameLength;
 
 	BITMAPINFOHEADER *pBmi=&(pvi->bmiHeader);
 	pBmi->biSize=sizeof(BITMAPINFOHEADER);
@@ -464,21 +550,6 @@ HRESULT NMVCamPin::GetMediaType(CMediaType *pMediaType) {
 	pMediaType->SetTemporalCompression(FALSE);
 	const int bmpsize=DIBSIZE(*pBmi);
 	pMediaType->SetSampleSize(bmpsize);
-	if(m_BmpData) delete m_BmpData;
-	m_BmpData=new DWORD[pBmi->biWidth * pBmi->biHeight];
-	memset(m_BmpData,0,pMediaType->GetSampleSize());
-	
-	HDC dwhdc=GetDC(GetDesktopWindow());
-	m_Bitmap=
-		CreateDIBitmap(dwhdc, pBmi, CBM_INIT, m_BmpData, (BITMAPINFO*)pBmi, DIB_RGB_COLORS);
-	
-	if (m_Hdc) {
-		DeleteDC(m_Hdc);
-		m_Hdc = NULL;
-	}
-	m_Hdc=CreateCompatibleDC(dwhdc);
-	SelectObject(m_Hdc, m_Bitmap);
-	ReleaseDC(GetDesktopWindow(), dwhdc);
 	
 	return hr;
 }
@@ -532,7 +603,7 @@ HRESULT NMVCamPin::FillBuffer(IMediaSample *pSample) {
 
 	TCHAR buffer[200];
 	CRefTime ref;
-	m_pFilter->StreamTime(ref);
+	_pFilter->StreamTime(ref);
 	
 	updateKeyboardState();
 	
@@ -542,28 +613,18 @@ HRESULT NMVCamPin::FillBuffer(IMediaSample *pSample) {
 
 	//キャプチャされた画像のビット列をpSampleDataにコピー
 	if (isCapturing()) {
-		convertFrameToBits();
-		memcpy(pSampleData, m_frameBits, WINDOW_WIDTH * WINDOW_HEIGHT * ((PIXEL_BIT - 1) / 8 + 1));
+		DrawCaptureWindow();
 	}
 	else {
-		SelectObject(m_Hdc, m_brush);
-		PatBlt(m_Hdc, 0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, PATCOPY);
-		if (m_pickerResult == S_OK) {
-			_snwprintf_s(buffer, _countof(buffer), _TRUNCATE, TEXT("No Signal: Press SHIFT + SPACE to select a window. "));
-		}
-		else {
-			_snwprintf_s(buffer, _countof(buffer), _TRUNCATE, TEXT("Error occurs. "));
-		}
-		TextOut(m_Hdc, 0, 0, buffer, lstrlen(buffer));
-		VIDEOINFO *pvi = (VIDEOINFO *)m_mt.Format();
-		GetDIBits(m_Hdc, m_Bitmap, 0, WINDOW_HEIGHT,
-			pSampleData, (BITMAPINFO*)&pvi->bmiHeader, DIB_RGB_COLORS);
+		DrawPlaceholder();
 	}
 
-	const REFERENCE_TIME delta=m_rtFrameLength;
+	GetSampleOnCaptureWindow(pSampleData);
+
+	const REFERENCE_TIME delta=_rtFrameLength;
 	REFERENCE_TIME start_time=ref;
 	FILTER_STATE state;
-	m_pFilter->GetState(0, &state);
+	_pFilter->GetState(0, &state);
 	if(state==State_Paused)
 		start_time=0;
 	REFERENCE_TIME end_time=(start_time+delta);
@@ -572,7 +633,7 @@ HRESULT NMVCamPin::FillBuffer(IMediaSample *pSample) {
 	pSample->SetSyncPoint(TRUE);
 
 	//CPU使用率を抑えて、ZoomなどのUIの反応をしやすくするために適度にSleepする。
-	std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
 	return S_OK;
 }

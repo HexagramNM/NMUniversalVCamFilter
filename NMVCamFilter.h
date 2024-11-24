@@ -47,7 +47,7 @@ class NMVCamPin;
 class NMVCamSource : public CSource
 {
 private:
-	NMVCamPin *m_pin;
+	NMVCamPin *_pin;
 public:
 
 	NMVCamSource(LPUNKNOWN pUnk, HRESULT *phr);
@@ -160,18 +160,27 @@ private:
 
 	void updateAttatchedWindow();
 
-	bool isCapturing() { return m_framePool != nullptr; }
+	bool isCapturing() { return _framePool != nullptr; }
 
 	void stopCapture();
 
 	void changeWindow(GraphicsCaptureItem targetCaptureItem);
 
-	void convertFrameToBits();
-
-	void changePixelPos();
-
 	void onFrameArrived(Direct3D11CaptureFramePool const &sender,
 						winrt::Windows::Foundation::IInspectable const &args);
+
+	/****************************************************************/
+	/*  DirectX Function                                            */
+	/****************************************************************/
+	void SetupOffscreenRendering();
+
+	void SetupPlaceholder();
+
+	void DrawCaptureWindow();
+
+	void DrawPlaceholder();
+
+	void GetSampleOnCaptureWindow(LPBYTE sampleData);
 
 	/****************************************************************/
 	/*  DirectInput Function                                        */
@@ -189,36 +198,53 @@ private:
 
 	void manageReverseCommand();
 	
-	NMVCamSource*		m_pFilter;			//このピンが所属しているフィルタへのポインタ
-	bool m_isSelectingWindow;
-	bool m_pickerActivate;
-	bool m_reverseOutput;
-	bool m_previousChangeReverseOutput;
-	IDirect3DDevice m_dxDevice;
-	com_ptr<ID3D11DeviceContext> m_deviceCtx;
-	ID3D11Texture2D *m_bufferTexture;
-	D3D11_TEXTURE2D_DESC m_bufferTextureDesc;
-	HWND m_attatchedWindow;
-	winrt::Windows::Foundation::IAsyncOperation<GraphicsCaptureItem> m_graphicsCaptureAsyncResult;
-	GraphicsCaptureItem m_graphicsCaptureItem;
-	Direct3D11CaptureFramePool m_framePool;
-	event_revoker<IDirect3D11CaptureFramePool> m_frameArrived;
-	GraphicsCaptureSession m_captureSession;
-	SizeInt32 m_capWinSize;
-	D3D11_BOX m_capWinSizeInTexture;
-	unsigned char* m_frameBits;
-	double *m_pixelPosX;
-	double *m_pixelPosY;
-	LPDIRECTINPUT8 m_lpDI;
-	LPDIRECTINPUTDEVICE8 m_lpKeyboard;
-	BYTE m_key[256];
-	std::thread *m_capturePickerThread;
-	HRESULT m_pickerResult;
+	NMVCamSource* _pFilter;			//このピンが所属しているフィルタへのポインタ
+	bool _isSelectingWindow;
+	bool _pickerActivate;
+	bool _reverseOutput;
+	bool _previousChangeReverseOutput;
+	IDirect3DDevice _dxWinRTDevice;
+	com_ptr<ID3D11Device> _dxDevice;
+	com_ptr<ID3D11DeviceContext> _deviceCtx;
+	HWND _attatchedWindow;
+	winrt::Windows::Foundation::IAsyncOperation<GraphicsCaptureItem> _graphicsCaptureAsyncResult;
+	GraphicsCaptureItem _graphicsCaptureItem;
+	Direct3D11CaptureFramePool _framePool;
+	event_revoker<IDirect3D11CaptureFramePool> _frameArrived;
+	GraphicsCaptureSession _captureSession;
+	SizeInt32 _capWinSize;
+	D3D11_BOX _capWinSizeInTexture;
+	LPDIRECTINPUT8 _lpDI;
+	LPDIRECTINPUTDEVICE8 _lpKeyboard;
+	BYTE _key[256];
+	std::thread *_capturePickerThread;
+	HRESULT _pickerResult;
 
-	REFERENCE_TIME	m_rtFrameLength;	//1フレームあたりの時間
+	com_ptr<ID3D11Texture2D> _captureWindowTexture;
+	com_ptr<ID3D11Texture2D> _offscreenRenderingTexture;
+	com_ptr<ID3D11Texture2D> _bufferTexture;
 
-	HBITMAP m_Bitmap;
-	LPDWORD m_BmpData;
-	HDC     m_Hdc;
-	HBRUSH  m_brush;
+	struct VertexType
+	{
+		::DirectX::XMFLOAT3 Pos;
+		::DirectX::XMFLOAT2 Tex;
+	};
+
+	com_ptr<ID3D11RenderTargetView>_renderTargetView;
+	com_ptr<ID3D11ShaderResourceView> _shaderResourceView;
+	com_ptr<ID3D11VertexShader> _spriteVS;
+	com_ptr<ID3D11PixelShader> _spritePS;
+	com_ptr<ID3D11InputLayout> _spriteInputLayout;
+
+	D3D11_BUFFER_DESC _vbDesc;
+	VertexType _polygonVertex[4];
+	com_ptr<ID3D11Buffer> _vertexBuffer;
+
+	com_ptr<ID2D1Factory> _placeholderD2DFactory;
+	com_ptr<ID2D1RenderTarget> _placeholderRenderTarget;
+	com_ptr<IDWriteFactory> _placeholderDWFactory;
+	com_ptr<IDWriteTextFormat> _placeholderTextFormat;
+	com_ptr<ID2D1SolidColorBrush> _placeholderBrush;
+
+	REFERENCE_TIME	_rtFrameLength;	//1フレームあたりの時間
 };

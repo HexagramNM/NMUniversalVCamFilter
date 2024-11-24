@@ -168,7 +168,7 @@ HRESULT NMVCamPin::SetFormat(
 	IPin *pin;
 	ConnectedTo(&pin);
 	if (pin) {
-		IFilterGraph *pGraph = m_pFilter->GetGraph();
+		IFilterGraph *pGraph = _pFilter->GetGraph();
 		pGraph->Reconnect(this);
 	}
 	return S_OK;

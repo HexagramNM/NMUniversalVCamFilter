@@ -82,12 +82,21 @@
 #include <windows.h>
 #pragma comment(lib, "windowsapp")
 
+#pragma comment(lib, "d3d11.lib")
+#pragma comment(lib, "d3dcompiler.lib")
+
+#include <d2d1.h>
+#pragma comment(lib, "d2d1.lib")
+
+#include <dwrite.h>
+#pragma comment(lib, "dwrite.lib")
+
 #define MAX_CAP_WIDTH 3840
 #define MAX_CAP_HEIGHT 2160
 #define WINDOW_WIDTH 960
 #define WINDOW_HEIGHT 720
 #define PIXEL_BIT 24
-//#define REFINED_PROCESS
+#define PIXEL_BYTE 3
 
 #include "NMVCamFilter.h"
 

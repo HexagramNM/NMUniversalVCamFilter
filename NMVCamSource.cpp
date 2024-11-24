@@ -2,17 +2,17 @@
 
 NMVCamSource::NMVCamSource(IUnknown *pUnk, HRESULT *phr) :
 	CSource(FILTER_NAME, pUnk, CLSID_NMUniversalVCam), 
-	m_pin(NULL)
+	_pin(NULL)
 {
-	m_pin = new NMVCamPin(phr, this);
+	_pin = new NMVCamPin(phr, this);
 
-	if(m_pin == NULL) {
+	if(_pin == NULL) {
 		*phr=E_OUTOFMEMORY;
 	}
 }
 
 NMVCamSource::~NMVCamSource() {
-	delete m_pin;
+	delete _pin;
 }
 
 CUnknown * WINAPI NMVCamSource::CreateInstance(IUnknown *pUnk, HRESULT *phr) {
