@@ -126,11 +126,12 @@ void NMVCamPin::createDirect3DDevice() {
 }
 
 void NMVCamPin::openCaptureWindowPicker() {
-	init_apartment();
+	init_apartment(winrt::apartment_type::single_threaded);
 	
 	_attatchedWindow = CreateWindowW(L"STATIC", L"NMUniversalVCam", SS_WHITERECT,
 		0, 0, 300, 1, NULL, NULL, GetModuleHandleW(NULL), NULL);
-	ShowWindow(_attatchedWindow, SW_SHOW);
+	ShowWindow(_attatchedWindow, SW_MINIMIZE);
+	ShowWindow(_attatchedWindow, SW_RESTORE);
 	UpdateWindow(_attatchedWindow);
 	//ピッカーを開くために作ったウィンドウをピッカーの選択肢から除外する。
 	SetWindowDisplayAffinity(_attatchedWindow, WDA_EXCLUDEFROMCAPTURE);
