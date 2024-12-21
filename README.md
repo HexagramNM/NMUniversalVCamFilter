@@ -18,7 +18,22 @@ DirectShow, WinRTのWindowsGraphicsCaptureAPIを利用しております。GDI�
 
 [CapturePreview](https://github.com/opysky/examples/tree/master/winrt/GraphicsCapture/CapturePreview)
 
-DirectShowとWinRTを組み合わせる際の注意点をQiitaにも[記事](https://qiita.com/HexagramNM/items/8493350d40608433421c)としてあげております。こちらもご覧ください。
+# 解説記事
+DirectShowとWinRTを組み合わせる際の注意点をQiitaにもとしてあげております。こちらもご覧ください。
+
+- [WinRTのWindowsGraphicsCaptureAPIでキャプチャしたウィンドウをDirectShowで自作した仮想カメラに映そう](https://qiita.com/HexagramNM/items/8493350d40608433421c)
+
+- [ComputeShaderでの最適化例: DirectShowの仮想カメラ](https://qiita.com/HexagramNM/items/b75ca3894b88bdaf1c0b)
+
+
+# ブランチ （新しい順）
+- `main`... 最新のバージョン (DirectXOptimizedのバージョンとほぼ同じ)
+
+- `DirectXOptimized`... 「ComputeShaderでの最適化例: DirectShowの仮想カメラ」の記事を書いたタイミングのDirectXによる最適化を適用したバージョン
+
+- `OnlyOffScreenRendering`... WindowsGraphicsCapture APIで取得されたテクスチャの変形をCPUではなくDirectXでオフスクリーンレンダリングすることで最適化したバージョン
+
+- `Old_cpuProcessing`... DirectXによる最適化を適用する前の最初のバージョン
 
 # ビルド方法
 
